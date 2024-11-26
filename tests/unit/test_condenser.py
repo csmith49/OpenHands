@@ -4,12 +4,7 @@ import pytest
 
 from openhands.core.exceptions import LLMResponseError
 from openhands.llm.llm import LLM
-from openhands.memory.condenser import MemoryCondenser
-
-
-@pytest.fixture
-def memory_condenser():
-    return MemoryCondenser()
+from openhands.memory.condenser import Event, LLMCondenser, NoOpCondenser, LastKCondenser
 
 
 @pytest.fixture
@@ -17,28 +12,92 @@ def mock_llm():
     return Mock(spec=LLM)
 
 
-def test_condense_success(memory_condenser, mock_llm):
+@pytest.fixture
+def llm_condenser(mock_llm):
+    return LLMCondenser(mock_llm)
+
+
+@pytest.fixture
+def events():
+    return [
+        Event(content="Hello", role="user"),
+        Event(content="Hi there", role="assistant"),
+        Event(content="How are you?", role="user"),
+        Event(content="I'm good", role="assistant"),
+    ]
+
+
+def test_llm_condense_success(llm_condenser, mock_llm, events):
     mock_llm.completion.return_value = {
         'choices': [{'message': {'content': 'Condensed memory'}}]
     }
-    result = memory_condenser.condense('Summarize this', mock_llm)
-    assert result == 'Condensed memory'
-    mock_llm.completion.assert_called_once_with(
-        messages=[{'content': 'Summarize this', 'role': 'user'}]
-    )
+    result = llm_condenser.condense(events)
+    assert len(result) == 1
+    assert result[0].content == 'Condensed memory'
+    assert result[0].role == 'assistant'
+    mock_llm.completion.assert_called_once()
 
 
-def test_condense_exception(memory_condenser, mock_llm):
+def test_llm_condense_exception(llm_condenser, mock_llm, events):
     mock_llm.completion.side_effect = LLMResponseError('LLM error')
     with pytest.raises(LLMResponseError, match='LLM error'):
-        memory_condenser.condense('Summarize this', mock_llm)
+        llm_condenser.condense(events)
 
 
 @patch('openhands.memory.condenser.logger')
-def test_condense_logs_error(mock_logger, memory_condenser, mock_llm):
+def test_llm_condense_logs_error(mock_logger, llm_condenser, mock_llm, events):
     mock_llm.completion.side_effect = LLMResponseError('LLM error')
     with pytest.raises(LLMResponseError):
-        memory_condenser.condense('Summarize this', mock_llm)
+        llm_condenser.condense(events)
     mock_logger.error.assert_called_once_with(
         'Error condensing thoughts: %s', 'LLM error', exc_info=False
     )
+
+
+def test_noop_condenser(events):
+    condenser = NoOpCondenser()
+    result = condenser.condense(events)
+    assert result == events
+
+
+def test_lastk_condenser_keeps_all_user_messages():
+    events = [
+        Event(content="Hello", role="user"),
+        Event(content="Hi there", role="assistant"),
+        Event(content="How are you?", role="user"),
+        Event(content="I'm good", role="assistant"),
+    ]
+    condenser = LastKCondenser(k=1)
+    result = condenser.condense(events)
+    
+    user_messages = [e for e in result if e.role == "user"]
+    assert len(user_messages) == 2
+    assert user_messages[0].content == "Hello"
+    assert user_messages[1].content == "How are you?"
+
+
+def test_lastk_condenser_keeps_k_non_user_messages():
+    events = [
+        Event(content="Hi there", role="assistant"),
+        Event(content="Hello", role="user"),
+        Event(content="How can I help?", role="assistant"),
+        Event(content="I need help", role="user"),
+        Event(content="Sure!", role="assistant"),
+    ]
+    condenser = LastKCondenser(k=2)
+    result = condenser.condense(events)
+    
+    non_user_messages = [e for e in result if e.role != "user"]
+    assert len(non_user_messages) == 2
+    assert non_user_messages[0].content == "How can I help?"
+    assert non_user_messages[1].content == "Sure!"
+
+
+def test_lastk_condenser_with_k_larger_than_messages():
+    events = [
+        Event(content="Hello", role="user"),
+        Event(content="Hi there", role="assistant"),
+    ]
+    condenser = LastKCondenser(k=5)
+    result = condenser.condense(events)
+    assert result == events
