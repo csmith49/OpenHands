@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import List, Type
+from typing import List, Type, Literal
 
 from pydantic import BaseModel, Field
 
@@ -15,16 +15,26 @@ class Event:
 
 
 class CondenserConfig(BaseModel):
-    """Configuration for memory condensers.
-    
-    Attributes:
-        type: The type of condenser to use ('llm', 'noop', 'lastk')
-        k: Number of non-user messages to keep for LastKCondenser
-        llm_config: The name of the llm config to use for LLMCondenser
-    """
-    type: str = Field(default="noop", description="Type of condenser to use")
-    k: int = Field(default=5, description="Number of non-user messages to keep (for LastKCondenser)")
-    llm_config: str | None = Field(default=None, description="Name of LLM config to use (for LLMCondenser)")
+    """Base configuration for memory condensers."""
+    type: str = Field(..., description="Type of condenser to use")
+
+
+class NoOpCondenserConfig(CondenserConfig):
+    """Configuration for NoOpCondenser.
+    Does not require any additional parameters."""
+    type: Literal["noop"] = Field(default="noop", description="Must be 'noop'")
+
+
+class LastKCondenserConfig(CondenserConfig):
+    """Configuration for LastKCondenser."""
+    type: Literal["lastk"] = Field(default="lastk", description="Must be 'lastk'")
+    k: int = Field(default=5, description="Number of non-user messages to keep")
+
+
+class LLMCondenserConfig(CondenserConfig):
+    """Configuration for LLMCondenser."""
+    type: Literal["llm"] = Field(default="llm", description="Must be 'llm'")
+    llm_config: str | None = Field(default=None, description="Name of LLM config to use")
 
 
 class Condenser(ABC):

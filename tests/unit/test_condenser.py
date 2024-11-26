@@ -11,7 +11,9 @@ from openhands.memory.condenser import (
     NoOpCondenser,
     LastKCondenser,
     Condenser,
-    CondenserConfig,
+    NoOpCondenserConfig,
+    LastKCondenserConfig,
+    LLMCondenserConfig,
 )
 
 
@@ -129,25 +131,52 @@ def test_condenser_registry():
         Condenser.get_cls("nonexistent")
 
 
-def test_condenser_config_validation():
-    # Test valid configs
-    config = CondenserConfig(type="noop")
+def test_noop_condenser_config_validation():
+    # Test valid config
+    config = NoOpCondenserConfig()
     assert config.type == "noop"
-    assert config.k == 5  # default value
-    assert config.llm_config is None  # default value
     
-    config = CondenserConfig(type="lastk", k=10)
+    # Test invalid type
+    with pytest.raises(ValidationError):
+        NoOpCondenserConfig(type="invalid")
+    
+    with pytest.raises(ValidationError):
+        NoOpCondenserConfig(type=123)
+
+
+def test_lastk_condenser_config_validation():
+    # Test valid configs
+    config = LastKCondenserConfig()
+    assert config.type == "lastk"
+    assert config.k == 5  # default value
+    
+    config = LastKCondenserConfig(k=10)
     assert config.type == "lastk"
     assert config.k == 10
     
-    config = CondenserConfig(type="llm", llm_config="gpt-4")
+    # Test invalid type
+    with pytest.raises(ValidationError):
+        LastKCondenserConfig(type="invalid")
+    
+    # Test invalid k
+    with pytest.raises(ValidationError):
+        LastKCondenserConfig(k="invalid")
+
+
+def test_llm_condenser_config_validation():
+    # Test valid configs
+    config = LLMCondenserConfig()
+    assert config.type == "llm"
+    assert config.llm_config is None  # default value
+    
+    config = LLMCondenserConfig(llm_config="gpt-4")
     assert config.type == "llm"
     assert config.llm_config == "gpt-4"
     
     # Test invalid type
     with pytest.raises(ValidationError):
-        CondenserConfig(type=123)  # type must be string
+        LLMCondenserConfig(type="invalid")
     
-    # Test invalid k
+    # Test invalid llm_config type
     with pytest.raises(ValidationError):
-        CondenserConfig(k="invalid")  # k must be integer
+        LLMCondenserConfig(llm_config=123)
