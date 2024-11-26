@@ -1,10 +1,18 @@
 from unittest.mock import Mock, patch
 
 import pytest
+from pydantic import ValidationError
 
 from openhands.core.exceptions import LLMResponseError
 from openhands.llm.llm import LLM
-from openhands.memory.condenser import Event, LLMCondenser, NoOpCondenser, LastKCondenser
+from openhands.memory.condenser import (
+    Event,
+    LLMCondenser,
+    NoOpCondenser,
+    LastKCondenser,
+    Condenser,
+    CondenserConfig,
+)
 
 
 @pytest.fixture
@@ -101,3 +109,45 @@ def test_lastk_condenser_with_k_larger_than_messages():
     condenser = LastKCondenser(k=5)
     result = condenser.condense(events)
     assert result == events
+
+
+def test_condenser_registry():
+    # Test registration
+    class TestCondenser(Condenser):
+        def condense(self, events: list[Event]) -> list[Event]:
+            return events
+    
+    Condenser.register("test", TestCondenser)
+    assert Condenser.get_cls("test") == TestCondenser
+    
+    # Test duplicate registration
+    with pytest.raises(ValueError, match="Condenser already registered with name: test"):
+        Condenser.register("test", TestCondenser)
+    
+    # Test getting non-existent condenser
+    with pytest.raises(ValueError, match="No condenser registered with name: nonexistent"):
+        Condenser.get_cls("nonexistent")
+
+
+def test_condenser_config_validation():
+    # Test valid configs
+    config = CondenserConfig(type="noop")
+    assert config.type == "noop"
+    assert config.k == 5  # default value
+    assert config.llm_config is None  # default value
+    
+    config = CondenserConfig(type="lastk", k=10)
+    assert config.type == "lastk"
+    assert config.k == 10
+    
+    config = CondenserConfig(type="llm", llm_config="gpt-4")
+    assert config.type == "llm"
+    assert config.llm_config == "gpt-4"
+    
+    # Test invalid type
+    with pytest.raises(ValidationError):
+        CondenserConfig(type=123)  # type must be string
+    
+    # Test invalid k
+    with pytest.raises(ValidationError):
+        CondenserConfig(k="invalid")  # k must be integer

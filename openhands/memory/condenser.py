@@ -1,6 +1,8 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import List
+from typing import List, Type
+
+from pydantic import BaseModel, Field
 
 from openhands.core.logger import openhands_logger as logger
 from openhands.llm.llm import LLM
@@ -12,10 +14,57 @@ class Event:
     role: str
 
 
+class CondenserConfig(BaseModel):
+    """Configuration for memory condensers.
+    
+    Attributes:
+        type: The type of condenser to use ('llm', 'noop', 'lastk')
+        k: Number of non-user messages to keep for LastKCondenser
+        llm_config: The name of the llm config to use for LLMCondenser
+    """
+    type: str = Field(default="noop", description="Type of condenser to use")
+    k: int = Field(default=5, description="Number of non-user messages to keep (for LastKCondenser)")
+    llm_config: str | None = Field(default=None, description="Name of LLM config to use (for LLMCondenser)")
+
+
 class Condenser(ABC):
+    _registry: dict[str, Type['Condenser']] = {}
+
     @abstractmethod
     def condense(self, events: List[Event]) -> List[Event]:
         pass
+
+    @classmethod
+    def register(cls, name: str, condenser_cls: Type['Condenser']) -> None:
+        """Register a condenser class with the given name.
+        
+        Args:
+            name: Name to register the condenser under
+            condenser_cls: The condenser class to register
+        
+        Raises:
+            ValueError: If a condenser is already registered with this name
+        """
+        if name in cls._registry:
+            raise ValueError(f"Condenser already registered with name: {name}")
+        cls._registry[name] = condenser_cls
+
+    @classmethod
+    def get_cls(cls, name: str) -> Type['Condenser']:
+        """Get a registered condenser class by name.
+        
+        Args:
+            name: Name of the condenser to retrieve
+        
+        Returns:
+            The registered condenser class
+        
+        Raises:
+            ValueError: If no condenser is registered with this name
+        """
+        if name not in cls._registry:
+            raise ValueError(f"No condenser registered with name: {name}")
+        return cls._registry[name]
 
 
 class LLMCondenser(Condenser):
@@ -50,3 +99,9 @@ class LastKCondenser(Condenser):
             return user_messages + other_messages
         
         return user_messages + other_messages[-self.k:]
+
+
+# Register the built-in condensers
+Condenser.register("llm", LLMCondenser)
+Condenser.register("noop", NoOpCondenser)
+Condenser.register("lastk", LastKCondenser)
