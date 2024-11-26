@@ -116,25 +116,34 @@ def test_lastk_condenser_with_k_larger_than_messages():
 def test_condenser_registry():
     # Test registration
     class TestCondenser(Condenser):
+        type_name = "test"
         def condense(self, events: list[Event]) -> list[Event]:
             return events
     
-    Condenser.register("test", TestCondenser)
+    Condenser.register(TestCondenser)
     assert Condenser.get_cls("test") == TestCondenser
     
     # Test duplicate registration
     with pytest.raises(ValueError, match="Condenser already registered with name: test"):
-        Condenser.register("test", TestCondenser)
+        Condenser.register(TestCondenser)
     
     # Test getting non-existent condenser
     with pytest.raises(ValueError, match="No condenser registered with name: nonexistent"):
         Condenser.get_cls("nonexistent")
+    
+    # Test missing type_name
+    class InvalidCondenser(Condenser):
+        def condense(self, events: list[Event]) -> list[Event]:
+            return events
+    
+    with pytest.raises(ValueError, match="Condenser class InvalidCondenser must define type_name"):
+        Condenser.register(InvalidCondenser)
 
 
 def test_noop_condenser_config_validation():
     # Test valid config
     config = NoOpCondenserConfig()
-    assert config.type == "noop"
+    assert config.type == NoOpCondenser.type_name
     
     # Test invalid type
     with pytest.raises(ValidationError):
@@ -147,11 +156,11 @@ def test_noop_condenser_config_validation():
 def test_lastk_condenser_config_validation():
     # Test valid configs
     config = LastKCondenserConfig()
-    assert config.type == "lastk"
+    assert config.type == LastKCondenser.type_name
     assert config.k == 5  # default value
     
     config = LastKCondenserConfig(k=10)
-    assert config.type == "lastk"
+    assert config.type == LastKCondenser.type_name
     assert config.k == 10
     
     # Test invalid type
@@ -166,11 +175,11 @@ def test_lastk_condenser_config_validation():
 def test_llm_condenser_config_validation():
     # Test valid configs
     config = LLMCondenserConfig()
-    assert config.type == "llm"
+    assert config.type == LLMCondenser.type_name
     assert config.llm_config is None  # default value
     
     config = LLMCondenserConfig(llm_config="gpt-4")
-    assert config.type == "llm"
+    assert config.type == LLMCondenser.type_name
     assert config.llm_config == "gpt-4"
     
     # Test invalid type

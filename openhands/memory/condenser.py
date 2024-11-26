@@ -19,42 +19,29 @@ class CondenserConfig(BaseModel):
     type: str = Field(..., description="Type of condenser to use")
 
 
-class NoOpCondenserConfig(CondenserConfig):
-    """Configuration for NoOpCondenser.
-    Does not require any additional parameters."""
-    type: Literal["noop"] = Field(default="noop", description="Must be 'noop'")
-
-
-class LastKCondenserConfig(CondenserConfig):
-    """Configuration for LastKCondenser."""
-    type: Literal["lastk"] = Field(default="lastk", description="Must be 'lastk'")
-    k: int = Field(default=5, description="Number of non-user messages to keep")
-
-
-class LLMCondenserConfig(CondenserConfig):
-    """Configuration for LLMCondenser."""
-    type: Literal["llm"] = Field(default="llm", description="Must be 'llm'")
-    llm_config: str | None = Field(default=None, description="Name of LLM config to use")
-
-
 class Condenser(ABC):
     _registry: dict[str, Type['Condenser']] = {}
+    type_name: str
 
     @abstractmethod
     def condense(self, events: List[Event]) -> List[Event]:
         pass
 
     @classmethod
-    def register(cls, name: str, condenser_cls: Type['Condenser']) -> None:
-        """Register a condenser class with the given name.
+    def register(cls, condenser_cls: Type['Condenser']) -> None:
+        """Register a condenser class using its type_name.
         
         Args:
-            name: Name to register the condenser under
             condenser_cls: The condenser class to register
         
         Raises:
             ValueError: If a condenser is already registered with this name
+            ValueError: If condenser_cls doesn't have type_name defined
         """
+        if not hasattr(condenser_cls, 'type_name'):
+            raise ValueError(f"Condenser class {condenser_cls.__name__} must define type_name")
+        
+        name = condenser_cls.type_name
         if name in cls._registry:
             raise ValueError(f"Condenser already registered with name: {name}")
         cls._registry[name] = condenser_cls
@@ -78,6 +65,8 @@ class Condenser(ABC):
 
 
 class LLMCondenser(Condenser):
+    type_name = "llm"
+
     def __init__(self, llm: LLM):
         self.llm = llm
 
@@ -93,11 +82,15 @@ class LLMCondenser(Condenser):
 
 
 class NoOpCondenser(Condenser):
+    type_name = "noop"
+
     def condense(self, events: List[Event]) -> List[Event]:
         return events
 
 
 class LastKCondenser(Condenser):
+    type_name = "lastk"
+
     def __init__(self, k: int):
         self.k = k
 
@@ -111,7 +104,34 @@ class LastKCondenser(Condenser):
         return user_messages + other_messages[-self.k:]
 
 
+class NoOpCondenserConfig(CondenserConfig):
+    """Configuration for NoOpCondenser.
+    Does not require any additional parameters."""
+    type: Literal[NoOpCondenser.type_name] = Field(
+        default=NoOpCondenser.type_name,
+        description=f"Must be '{NoOpCondenser.type_name}'"
+    )
+
+
+class LastKCondenserConfig(CondenserConfig):
+    """Configuration for LastKCondenser."""
+    type: Literal[LastKCondenser.type_name] = Field(
+        default=LastKCondenser.type_name,
+        description=f"Must be '{LastKCondenser.type_name}'"
+    )
+    k: int = Field(default=5, description="Number of non-user messages to keep")
+
+
+class LLMCondenserConfig(CondenserConfig):
+    """Configuration for LLMCondenser."""
+    type: Literal[LLMCondenser.type_name] = Field(
+        default=LLMCondenser.type_name,
+        description=f"Must be '{LLMCondenser.type_name}'"
+    )
+    llm_config: str | None = Field(default=None, description="Name of LLM config to use")
+
+
 # Register the built-in condensers
-Condenser.register("llm", LLMCondenser)
-Condenser.register("noop", NoOpCondenser)
-Condenser.register("lastk", LastKCondenser)
+Condenser.register(LLMCondenser)
+Condenser.register(NoOpCondenser)
+Condenser.register(LastKCondenser)
