@@ -1,7 +1,7 @@
-from litellm import Message, ModelResponse
+from litellm import ModelResponse
 
 from openhands.core.logger import openhands_logger as logger
-from openhands.core.message import ImageContent, TextContent
+from openhands.core.message import ImageContent, Message, TextContent
 from openhands.events.action.action import Action
 from openhands.events.action.agent import AgentDelegateAction, AgentFinishAction
 from openhands.events.action.browse import BrowseInteractiveAction, BrowseURLAction
@@ -291,19 +291,25 @@ def get_messages(
     pending_tool_call_action_messages: dict[str, Message] = {}
     tool_call_id_to_message: dict[str, Message] = {}
 
+    messages_to_add: list[Message] = []
+
     for event in events:
         # create a regular message from an event
         if isinstance(event, Action):
-            messages_to_add = get_action_message(
-                action=event,
-                pending_tool_call_action_messages=pending_tool_call_action_messages,
-                vision_is_active=vision_is_active,
+            messages_to_add.extend(
+                get_action_message(
+                    action=event,
+                    pending_tool_call_action_messages=pending_tool_call_action_messages,
+                    vision_is_active=vision_is_active,
+                )
             )
         elif isinstance(event, Observation):
-            messages_to_add = get_observation_message(
-                obs=event,
-                tool_call_id_to_message=tool_call_id_to_message,
-                max_message_chars=max_message_chars,
+            messages_to_add.extend(
+                get_observation_message(
+                    obs=event,
+                    tool_call_id_to_message=tool_call_id_to_message,
+                    max_message_chars=max_message_chars,
+                )
             )
         else:
             raise ValueError(f'Unknown event type: {type(event)}')
