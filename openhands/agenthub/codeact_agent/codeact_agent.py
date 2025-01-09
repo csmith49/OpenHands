@@ -11,6 +11,7 @@ from openhands.controller.state.state import State
 from openhands.core.config import AgentConfig
 from openhands.core.logger import openhands_logger as logger
 from openhands.core.message import ImageContent, Message, TextContent
+from openhands.core.message_utils import get_messages
 from openhands.events.action import (
     Action,
     AgentDelegateAction,
@@ -427,7 +428,27 @@ class CodeActAgent(Agent):
         if not self.prompt_manager:
             raise Exception('Prompt Manager not instantiated.')
 
-        messages: list[Message] = [
+        initial_messages = self.get_initial_messages()
+
+        # Condense the events from the state.
+        events = self.condenser.condensed_history(state)
+        event_messages = get_messages(
+            events,
+            vision_is_active=self.llm.vision_is_active(),
+            max_message_chars=self.llm.config.max_message_chars,
+        )
+
+        messages = initial_messages + event_messages
+
+        self.enhance_user_messages(messages)
+        self.inject_prompt_caching(messages)
+
+        return messages
+
+    def get_initial_messages(self) -> list[Message]:
+        assert self.prompt_manager, 'Prompt Manager not instantiated.'
+        messages: list[Message] = []
+        messages.append(
             Message(
                 role='system',
                 content=[
@@ -437,7 +458,8 @@ class CodeActAgent(Agent):
                     )
                 ],
             )
-        ]
+        )
+
         example_message = self.prompt_manager.get_example_user_message()
         if example_message:
             messages.append(
@@ -448,72 +470,31 @@ class CodeActAgent(Agent):
                 )
             )
 
-        pending_tool_call_action_messages: dict[str, Message] = {}
-        tool_call_id_to_message: dict[str, Message] = {}
-
-        # Condense the events from the state.
-        events = self.condenser.condensed_history(state)
-
-        for event in events:
-            # create a regular message from an event
-            if isinstance(event, Action):
-                messages_to_add = self.get_action_message(
-                    action=event,
-                    pending_tool_call_action_messages=pending_tool_call_action_messages,
-                )
-            elif isinstance(event, Observation):
-                messages_to_add = self.get_observation_message(
-                    obs=event,
-                    tool_call_id_to_message=tool_call_id_to_message,
-                )
-            else:
-                raise ValueError(f'Unknown event type: {type(event)}')
-
-            # Check pending tool call action messages and see if they are complete
-            _response_ids_to_remove = []
-            for (
-                response_id,
-                pending_message,
-            ) in pending_tool_call_action_messages.items():
-                assert pending_message.tool_calls is not None, (
-                    'Tool calls should NOT be None when function calling is enabled & the message is considered pending tool call. '
-                    f'Pending message: {pending_message}'
-                )
-                if all(
-                    tool_call.id in tool_call_id_to_message
-                    for tool_call in pending_message.tool_calls
-                ):
-                    # If complete:
-                    # -- 1. Add the message that **initiated** the tool calls
-                    messages_to_add.append(pending_message)
-                    # -- 2. Add the tool calls **results***
-                    for tool_call in pending_message.tool_calls:
-                        messages_to_add.append(tool_call_id_to_message[tool_call.id])
-                        tool_call_id_to_message.pop(tool_call.id)
-                    _response_ids_to_remove.append(response_id)
-            # Cleanup the processed pending tool messages
-            for response_id in _response_ids_to_remove:
-                pending_tool_call_action_messages.pop(response_id)
-
-            for message in messages_to_add:
-                if message:
-                    if message.role == 'user':
-                        self.prompt_manager.enhance_message(message)
-                    messages.append(message)
-
-        if self.llm.is_caching_prompt_active():
-            # NOTE: this is only needed for anthropic
-            # following logic here:
-            # https://github.com/anthropics/anthropic-quickstarts/blob/8f734fd08c425c6ec91ddd613af04ff87d70c5a0/computer-use-demo/computer_use_demo/loop.py#L241-L262
-            breakpoints_remaining = 3  # remaining 1 for system/tool
-            for message in reversed(messages):
-                if message.role == 'user' or message.role == 'tool':
-                    if breakpoints_remaining > 0:
-                        message.content[
-                            -1
-                        ].cache_prompt = True  # Last item inside the message content
-                        breakpoints_remaining -= 1
-                    else:
-                        break
-
         return messages
+
+    def enhance_user_messages(self, messages: list[Message]) -> None:
+        assert self.prompt_manager, 'Prompt Manager not instantiated.'
+        for message in messages:
+            if message.role == 'user':
+                self.prompt_manager.enhance_message(message)
+
+    def inject_prompt_caching(self, messages: list[Message]) -> None:
+        """Update the cache prompt status for specific messages.
+
+        Note: This is only needed for Anthropic.
+        """
+        if not self.llm.is_caching_prompt_active():
+            return
+
+        # following logic here:
+        # https://github.com/anthropics/anthropic-quickstarts/blob/8f734fd08c425c6ec91ddd613af04ff87d70c5a0/computer-use-demo/computer_use_demo/loop.py#L241-L262
+        breakpoints_remaining = 3  # remaining 1 for system/tool
+        for message in reversed(messages):
+            if message.role == 'user' or message.role == 'tool':
+                if breakpoints_remaining > 0:
+                    message.content[
+                        -1
+                    ].cache_prompt = True  # Last item inside the message content
+                    breakpoints_remaining -= 1
+                else:
+                    break
