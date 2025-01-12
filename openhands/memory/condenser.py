@@ -19,6 +19,7 @@ from openhands.core.config.condenser_config import (
     RecentEventsCondenserConfig,
 )
 from openhands.core.logger import openhands_logger as logger
+from openhands.core.message_utils import get_messages
 from openhands.events.event import Event
 from openhands.events.observation import AgentCondensationObservation, Observation
 from openhands.llm.llm import LLM
@@ -317,6 +318,7 @@ class ImportantEventSelection(BaseModel):
     """Utility class for the `LLMAttentionCondenser` that forces the LLM to return a list of integers."""
 
     ids: list[int]
+    reason: str
 
 
 class LLMAttentionCondenser(RollingCondenser):
@@ -341,9 +343,10 @@ class LLMAttentionCondenser(RollingCondenser):
             model=self.llm.config.model,
             custom_llm_provider=self.llm.config.custom_llm_provider,
         ):
-            raise ValueError(
-                "The LLM model must support the 'response_schema' parameter to use the LLMAttentionCondenser."
-            )
+            # raise ValueError(
+            #     "The LLM model must support the 'response_schema' parameter to use the LLMAttentionCondenser."
+            # )
+            pass
 
         super().__init__()
 
@@ -357,21 +360,24 @@ class LLMAttentionCondenser(RollingCondenser):
 
         events_from_tail = target_size - len(head)
 
-        message: str = """You will be given a list of actions, observations, and thoughts from a coding agent.
-        Each item in the list has an identifier. Please sort the identifiers in order of how important the
-        contents of the item are for the next step of the coding agent's task, from most important to least
-        important."""
+        # message: str = """You will be given a list of actions, observations, and thoughts from a coding agent.
+        # The coding agent is trying to solve a task set by a user and these messages are part of what it has done so far.
+        # Rank each message based on how important you think it is for the agent to consider when making its next decision.
+        # A good ranking will help the agent focus on the most important information while ignoring the less important.
+        # Use the number 0 to reference the first message after this one, 1 for the second, and so on.
+        # """
+
+        prompt: str = f"""Every other message in this conversation is an action or observation for a coding agent, or a user
+        message to the agent. The agent is trying to help the user solve a problem. You will pick {self.max_size // 2} messages
+        to keep in the agent's memory. The agent will use these messages to make decisions in the future, so it is important to
+        pick messages that tell the agent what it has learned and already done successfully, and to ignore messages that are
+        potentially misleading. After you have picked the messages, provide a short reason for your choices.
+        """
 
         response = self.llm.completion(
             messages=[
-                {'content': message, 'role': 'user'},
-                *[
-                    {
-                        'content': f'<ID>{e.id}</ID>\n<CONTENT>{e.message}</CONTENT>',
-                        'role': 'user',
-                    }
-                    for e in events
-                ],
+                {'content': prompt, 'role': 'user'},
+                *self.llm.format_messages_for_llm(get_messages(events)),
             ],
             response_format={
                 'type': 'json_schema',
@@ -382,12 +388,18 @@ class LLMAttentionCondenser(RollingCondenser):
             },
         )
 
-        response_ids = ImportantEventSelection.model_validate_json(
+        selection = ImportantEventSelection.model_validate_json(
             response.choices[0].message.content
-        ).ids
+        )
+        response_indices = selection.ids
+
+        response_ids = [
+            event.id for index, event in enumerate(events) if index in response_indices
+        ]
 
         self.add_metadata('all_event_ids', [event.id for event in events])
         self.add_metadata('response_ids', response_ids)
+        self.add_metadata('reason', selection.reason)
         self.add_metadata('metrics', self.llm.metrics.get())
 
         # Filter out any IDs from the head and trim the results down
