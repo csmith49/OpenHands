@@ -112,7 +112,7 @@ class CodeActAgent(Agent):
                 os.path.dirname(os.path.dirname(openhands.__file__)),
                 'microagents',
             )
-            if self.config.use_microagents
+            if self.config.enable_prompt_extensions
             else None,
             prompt_dir=os.path.join(os.path.dirname(__file__), 'prompts'),
             disabled_microagents=self.config.disabled_microagents,
