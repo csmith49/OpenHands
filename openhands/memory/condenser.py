@@ -357,7 +357,7 @@ class LLMAmortizedSummarizationCondenser(RollingCondenser):
 
         # Identify events to be forgotten (those not in head or tail)
         forgotten_events = []
-        for event in events[self.keep_first:-1]:
+        for event in events[self.keep_first : -1]:
             if not isinstance(event, AgentCondensationObservation):
                 forgotten_events.append(event)
 
@@ -367,10 +367,10 @@ class LLMAmortizedSummarizationCondenser(RollingCondenser):
 
         # Construct prompt for summarization
         prompt = 'Please provide a concise summary of these events that captures their key information and significance:'
-        
+
         if self._previous_summary:
             prompt += f'\n\nPrevious Summary:\n{self._previous_summary}\n\nNew Events to Summarize:'
-        
+
         events_text = '\n'.join(f'{e.timestamp}: {e.message}' for e in forgotten_events)
         prompt += f'\n{events_text}'
 
@@ -383,7 +383,7 @@ class LLMAmortizedSummarizationCondenser(RollingCondenser):
 
             # Update the previous summary to include both old and new summaries
             if self._previous_summary:
-                self._previous_summary = f"{self._previous_summary}\n\nAdditional events:\n{summary_response}"
+                self._previous_summary = f'{self._previous_summary}\n\nAdditional events:\n{summary_response}'
             else:
                 self._previous_summary = summary_response
 
