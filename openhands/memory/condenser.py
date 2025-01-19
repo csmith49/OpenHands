@@ -358,18 +358,16 @@ class LLMAmortizedSummarizationCondenser(RollingCondenser):
         forgotten_events = events[self.keep_first : -events_from_tail]
 
         # Construct prompt for summarization
-        prompt = "Please provide a concise summary of these events that captures their key information and significance:"
-        
+        prompt = 'Please provide a concise summary of these events that captures their key information and significance:'
+
         if self._previous_summary:
-            prompt += f"\n\nPrevious Summary:\n{self._previous_summary}\n\nNew Events to Summarize:"
-        
+            prompt += f'\n\nPrevious Summary:\n{self._previous_summary}\n\nNew Events to Summarize:'
+
         events_text = '\n'.join(f'{e.timestamp}: {e.message}' for e in forgotten_events)
-        prompt += f"\n{events_text}"
+        prompt += f'\n{events_text}'
 
         try:
-            resp = self.llm.completion(
-                messages=[{'content': prompt, 'role': 'user'}]
-            )
+            resp = self.llm.completion(messages=[{'content': prompt, 'role': 'user'}])
             summary_response = resp.choices[0].message.content
             self._previous_summary = summary_response
 
