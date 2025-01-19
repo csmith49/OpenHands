@@ -7,6 +7,7 @@ import pytest
 from openhands.controller.state.state import State
 from openhands.core.config.condenser_config import (
     AmortizedForgettingCondenserConfig,
+    LLMAmortizedSummarizationCondenserConfig,
     LLMAttentionCondenserConfig,
     LLMSummarizingCondenserConfig,
     NoOpCondenserConfig,
@@ -15,12 +16,13 @@ from openhands.core.config.condenser_config import (
 )
 from openhands.core.config.llm_config import LLMConfig
 from openhands.events.event import Event, EventSource
-from openhands.events.observation.observation import Observation
+from openhands.events.observation import AgentCondensationObservation, Observation
 from openhands.llm import LLM
 from openhands.memory.condenser import (
     AmortizedForgettingCondenser,
     Condenser,
     ImportantEventSelection,
+    LLMAmortizedSummarizationCondenser,
     LLMAttentionCondenser,
     LLMSummarizingCondenser,
     NoOpCondenser,
@@ -518,3 +520,142 @@ def test_llm_attention_condenser_handles_too_few_events(mock_llm, mock_state):
 
         # The number of results should bounce back and forth between 1, 2, 1, 2, ...
         assert len(results) == (i % 2) + 1
+
+def test_llm_amortized_summarization_condenser_from_config():
+    """Test that LLMAmortizedSummarizationCondenser objects can be made from config."""
+    config = LLMAmortizedSummarizationCondenserConfig(
+        max_size=50,
+        keep_first=10,
+        llm_config=LLMConfig(
+            model='gpt-4o',
+            api_key='test_key',
+        ),
+    )
+    condenser = Condenser.from_config(config)
+
+    assert isinstance(condenser, LLMAmortizedSummarizationCondenser)
+    assert condenser.llm.config.model == 'gpt-4o'
+    assert condenser.llm.config.api_key.get_secret_value() == 'test_key'
+    assert condenser.max_size == 50
+    assert condenser.keep_first == 10
+
+
+def test_llm_amortized_summarization_condenser_invalid_config():
+    """Test that LLMAmortizedSummarizationCondenser raises error when keep_first > max_size."""
+    pytest.raises(ValueError, LLMAmortizedSummarizationCondenser, llm=MagicMock(), max_size=4, keep_first=2)
+    pytest.raises(ValueError, LLMAmortizedSummarizationCondenser, llm=MagicMock(), max_size=0)
+    pytest.raises(ValueError, LLMAmortizedSummarizationCondenser, llm=MagicMock(), keep_first=-1)
+
+
+def test_llm_amortized_summarization_condenser_grows_to_max_size(mock_llm, mock_state):
+    """Test that LLMAmortizedSummarizationCondenser correctly maintains an event context up to max size."""
+    max_size = 15
+    condenser = LLMAmortizedSummarizationCondenser(max_size=max_size, llm=mock_llm)
+
+    for i in range(max_size):
+        event = create_test_event(f'Event {i}')
+        mock_state.history.append(event)
+        results = condenser.condensed_history(mock_state)
+        assert len(results) == i + 1
+
+
+def test_llm_amortized_summarization_condenser_forgets_and_summarizes(mock_llm, mock_state):
+    """Test that the LLMAmortizedSummarizationCondenser forgets events and maintains a summary."""
+    max_size = 4
+    keep_first = 1
+    condenser = LLMAmortizedSummarizationCondenser(max_size=max_size, keep_first=keep_first, llm=mock_llm)
+
+    # Add initial event
+    first_event = create_test_event('Event 0')
+    mock_state.history.append(first_event)
+
+    # Set up mock LLM response
+    mock_llm.set_mock_response_content('Summary of forgotten events')
+
+    # Add enough events to trigger forgetting
+    for i in range(max_size + 3):  # +3 to ensure we're well past max_size
+        event = create_test_event(f'Event {i+1}')
+        mock_state.history.append(event)
+
+    # Get the condensed history
+    results = condenser.condensed_history(mock_state)
+
+    # We should have exactly 3 events:
+    # 1. First event (keep_first = 1)
+    # 2. Summary event
+    # 3. Most recent event
+    assert len(results) == 3, f"Expected 3 events, got {len(results)}: {results}"
+    assert results[0] == first_event, f"First event should be {first_event}, got {results[0]}"
+    assert isinstance(results[1], AgentCondensationObservation), f"Second event should be a summary, got {results[1]}"
+    assert results[1].content == 'Summary of forgotten events', f"Summary content should be 'Summary of forgotten events', got {results[1].content}"
+    assert results[2] == event, f"Last event should be {event}, got {results[2]}"
+
+
+def test_llm_amortized_summarization_condenser_llm_call(mock_llm, mock_state):
+    """Test that the LLM is called correctly when forgetting events."""
+    max_size = 4
+    keep_first = 1
+    condenser = LLMAmortizedSummarizationCondenser(max_size=max_size, keep_first=keep_first, llm=mock_llm)
+
+    # Add initial event
+    first_event = create_test_event('Event 0')
+    mock_state.history.append(first_event)
+
+    # Set up mock LLM response
+    mock_llm.set_mock_response_content('Summary of forgotten events')
+    mock_llm.metrics.get.return_value = {'test_metric': 1.0}
+
+    # Add enough events to trigger forgetting
+    for i in range(max_size):
+        event = create_test_event(f'Event {i+1}')
+        mock_state.history.append(event)
+        results = condenser.condensed_history(mock_state)
+
+    # Verify LLM was called with correct prompt
+    mock_llm.completion.assert_called_once()
+    call_args = mock_llm.completion.call_args[1]
+    assert 'messages' in call_args
+    assert len(call_args['messages']) == 1
+    assert 'Please provide a concise summary' in call_args['messages'][0]['content']
+    
+    # Verify metrics were added to state
+    assert 'condenser_meta' in mock_state.extra_data
+    assert len(mock_state.extra_data['condenser_meta']) == 1
+    assert mock_state.extra_data['condenser_meta'][0]['metrics'] == {'test_metric': 1.0}
+
+
+def test_llm_amortized_summarization_condenser_maintains_summary_chain(mock_llm, mock_state):
+    """Test that the condenser maintains a chain of summaries."""
+    max_size = 4
+    keep_first = 1
+    condenser = LLMAmortizedSummarizationCondenser(max_size=max_size, keep_first=keep_first, llm=mock_llm)
+
+    # Add initial event
+    first_event = create_test_event('Event 0')
+    mock_state.history.append(first_event)
+
+    # First round of forgetting
+    mock_llm.set_mock_response_content('First summary')
+    for i in range(max_size):
+        event = create_test_event(f'Event {i+1}')
+        mock_state.history.append(event)
+        results = condenser.condensed_history(mock_state)
+
+    # Verify first prompt doesn't contain previous summary
+    first_call_args = mock_llm.completion.call_args[1]
+    assert 'Previous Summary' not in first_call_args['messages'][0]['content']
+
+    # Reset mock and set new response
+    mock_llm.reset_mock()
+    mock_llm.set_mock_response_content('Second summary')
+
+    # Second round of forgetting
+    for i in range(max_size, max_size * 2):
+        event = create_test_event(f'Event {i+1}')
+        mock_state.history.append(event)
+        results = condenser.condensed_history(mock_state)
+
+    # Verify second prompt contains the previous summary
+    second_call_args = mock_llm.completion.call_args[1]
+    assert 'Previous Summary' in second_call_args['messages'][0]['content']
+    assert 'First summary' in second_call_args['messages'][0]['content']
