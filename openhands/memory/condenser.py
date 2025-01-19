@@ -321,9 +321,12 @@ class AmortizedForgettingCondenser(RollingCondenser):
 
 
 class LLMAmortizedSummarizationCondenser(RollingCondenser):
-    """A condenser that maintains a condensed history and forgets old events when it grows too large,
+    """A condenser that summarizes forgotten events.
+
+    Maintains a condensed history and forgets old events when it grows too large,
     keeping a special summarization event after the prefix that summarizes all previous summarizations
-    and newly forgotten events."""
+    and newly forgotten events.
+    """
 
     def __init__(self, llm: LLM, max_size: int = 100, keep_first: int = 0):
         if keep_first >= max_size // 2:
@@ -338,7 +341,6 @@ class LLMAmortizedSummarizationCondenser(RollingCondenser):
         self.max_size = max_size
         self.keep_first = keep_first
         self.llm = llm
-        self._previous_summary: str | None = None
 
         super().__init__()
 
@@ -347,55 +349,50 @@ class LLMAmortizedSummarizationCondenser(RollingCondenser):
         if len(events) <= self.max_size:
             return events
 
-        # We always keep exactly 3 events:
-        # 1. The first keep_first events
-        # 2. A summary event
-        # 3. The most recent event
         head = events[: self.keep_first]
-        tail = [events[-1]]  # Always keep the most recent event
+
+        target_size = self.max_size // 2
+        events_from_tail = target_size - len(head)
+        tail = events[-events_from_tail:]
+
+        summary_event = (
+            events[self.keep_first]
+            if isinstance(events[self.keep_first], AgentCondensationObservation)
+            else AgentCondensationObservation('No events summarized')
+        )
 
         # Identify events to be forgotten (those not in head or tail)
         forgotten_events = []
-        for event in events[self.keep_first : -1]:
+        for event in events[self.keep_first : -events_from_tail]:
             if not isinstance(event, AgentCondensationObservation):
                 forgotten_events.append(event)
-
-        # Ensure we have exactly 3 events
-        head = head[:1]  # Just keep the first event
-        tail = [events[-1]]  # Just keep the most recent event
 
         # Construct prompt for summarization
         prompt = 'Please provide a concise summary of these events that captures their key information and significance:'
 
-        if self._previous_summary:
-            prompt += f'\n\nPrevious Summary:\n{self._previous_summary}\n\nNew Events to Summarize:'
+        response = self.llm.completion(
+            messages=[
+                {
+                    'content': prompt + summary_event.message
+                    if summary_event.message
+                    else None,
+                    'role': 'user',
+                },
+                *[
+                    {
+                        'content': f'{e.message}',
+                        'role': 'user',
+                    }
+                    for e in forgotten_events
+                ],
+            ]
+        )
+        summary = response.choices[0].message.content
 
-        events_text = '\n'.join(f'{e.timestamp}: {e.message}' for e in forgotten_events)
-        prompt += f'\n{events_text}'
+        self.add_metadata('response', response.model_dump())
+        self.add_metadata('metrics', self.llm.metrics.get())
 
-        try:
-            resp = self.llm.completion(messages=[{'content': prompt, 'role': 'user'}])
-            summary_response = resp.choices[0].message.content
-
-            # Create a new summary event
-            summary_event = AgentCondensationObservation(summary_response)
-
-            # Update the previous summary to include both old and new summaries
-            if self._previous_summary:
-                self._previous_summary = f'{self._previous_summary}\n\nAdditional events:\n{summary_response}'
-            else:
-                self._previous_summary = summary_response
-
-            # Add metrics to state
-            self.add_metadata('response', resp.model_dump())
-            self.add_metadata('metrics', self.llm.metrics.get())
-            self.add_metadata('forgotten_events_count', len(forgotten_events))
-
-            return head + [summary_event] + tail
-
-        except Exception as e:
-            logger.error(f'Error condensing events: {str(e)}')
-            raise e
+        return head + [AgentCondensationObservation(summary)] + tail
 
 
 class ImportantEventSelection(BaseModel):
