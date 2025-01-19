@@ -666,7 +666,7 @@ def test_llm_amortized_summarization_condenser_maintains_summary_chain(
     for i in range(max_size):
         event = create_test_event(f'Event {i+1}')
         mock_state.history.append(event)
-        results = condenser.condensed_history(mock_state)
+        condenser.condensed_history(mock_state)
 
     # Verify first prompt doesn't contain previous summary
     first_call_args = mock_llm.completion.call_args[1]
@@ -680,7 +680,7 @@ def test_llm_amortized_summarization_condenser_maintains_summary_chain(
     for i in range(max_size, max_size * 2):
         event = create_test_event(f'Event {i+1}')
         mock_state.history.append(event)
-        results = condenser.condensed_history(mock_state)
+        condenser.condensed_history(mock_state)
 
     # Verify second prompt contains the previous summary
     second_call_args = mock_llm.completion.call_args[1]
