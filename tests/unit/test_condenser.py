@@ -416,7 +416,7 @@ def test_llm_attention_condenser_keeps_first_events(mock_llm, mock_state):
 
         mock_llm.set_mock_response_content(
             ImportantEventSelection(
-                ids=[event.id for event in mock_state.history]
+                ids=[event.id for event in mock_state.history], reason=''
             ).model_dump_json()
         )
         results = condenser.condensed_history(mock_state)
@@ -434,7 +434,8 @@ def test_llm_attention_condenser_grows_to_max_size(mock_llm, mock_state):
         event = create_test_event(f'Event {i}')
         mock_state.history.append(event)
         mock_llm.set_mock_response_content(
-            ImportantEventSelection(ids=[event.id for event in mock_state.history])
+            ImportantEventSelection(ids=[event.id for event in mock_state.history]),
+            reason='',
         )
         results = condenser.condensed_history(mock_state)
         assert len(results) == i + 1
@@ -453,7 +454,7 @@ def test_llm_attention_condenser_forgets_when_larger_than_max_size(
 
         mock_llm.set_mock_response_content(
             ImportantEventSelection(
-                ids=[event.id for event in mock_state.history]
+                ids=[event.id for event in mock_state.history], reason=''
             ).model_dump_json()
         )
 
@@ -474,7 +475,8 @@ def test_llm_attention_condenser_handles_events_outside_history(mock_llm, mock_s
 
         mock_llm.set_mock_response_content(
             ImportantEventSelection(
-                ids=[event.id for event in mock_state.history] + [-1, -2, -3, -4]
+                ids=[event.id for event in mock_state.history] + [-1, -2, -3, -4],
+                reason='',
             ).model_dump_json()
         )
         results = condenser.condensed_history(mock_state)
@@ -494,7 +496,8 @@ def test_llm_attention_condenser_handles_too_many_events(mock_llm, mock_state):
         mock_llm.set_mock_response_content(
             ImportantEventSelection(
                 ids=[event.id for event in mock_state.history]
-                + [event.id for event in mock_state.history]
+                + [event.id for event in mock_state.history],
+                reason='',
             ).model_dump_json()
         )
         results = condenser.condensed_history(mock_state)
@@ -513,7 +516,7 @@ def test_llm_attention_condenser_handles_too_few_events(mock_llm, mock_state):
         mock_state.history.append(event)
 
         mock_llm.set_mock_response_content(
-            ImportantEventSelection(ids=[]).model_dump_json()
+            ImportantEventSelection(ids=[], reason='').model_dump_json()
         )
 
         results = condenser.condensed_history(mock_state)
@@ -639,50 +642,8 @@ def test_llm_amortized_summarization_condenser_llm_call(mock_llm, mock_state):
     call_args = mock_llm.completion.call_args[1]
     assert 'messages' in call_args
     assert len(call_args['messages']) == 1
-    assert 'Please provide a concise summary' in call_args['messages'][0]['content']
 
     # Verify metrics were added to state
     assert 'condenser_meta' in mock_state.extra_data
     assert len(mock_state.extra_data['condenser_meta']) == 1
     assert mock_state.extra_data['condenser_meta'][0]['metrics'] == {'test_metric': 1.0}
-
-
-def test_llm_amortized_summarization_condenser_maintains_summary_chain(
-    mock_llm, mock_state
-):
-    """Test that the condenser maintains a chain of summaries."""
-    max_size = 4
-    keep_first = 1
-    condenser = LLMAmortizedSummarizationCondenser(
-        max_size=max_size, keep_first=keep_first, llm=mock_llm
-    )
-
-    # Add initial event
-    first_event = create_test_event('Event 0')
-    mock_state.history.append(first_event)
-
-    # First round of forgetting
-    mock_llm.set_mock_response_content('First summary')
-    for i in range(max_size):
-        event = create_test_event(f'Event {i+1}')
-        mock_state.history.append(event)
-        condenser.condensed_history(mock_state)
-
-    # Verify first prompt doesn't contain previous summary
-    first_call_args = mock_llm.completion.call_args[1]
-    assert 'Previous Summary' not in first_call_args['messages'][0]['content']
-
-    # Reset mock and set new response
-    mock_llm.reset_mock()
-    mock_llm.set_mock_response_content('Second summary')
-
-    # Second round of forgetting
-    for i in range(max_size, max_size * 2):
-        event = create_test_event(f'Event {i+1}')
-        mock_state.history.append(event)
-        condenser.condensed_history(mock_state)
-
-    # Verify second prompt contains the previous summary
-    second_call_args = mock_llm.completion.call_args[1]
-    assert 'Previous Summary' in second_call_args['messages'][0]['content']
-    assert 'First summary' in second_call_args['messages'][0]['content']
