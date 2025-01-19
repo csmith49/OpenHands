@@ -12,6 +12,7 @@ from openhands.controller.state.state import State
 from openhands.core.config.condenser_config import (
     AmortizedForgettingCondenserConfig,
     CondenserConfig,
+    LLMAmortizedSummarizationCondenserConfig,
     LLMAttentionCondenserConfig,
     LLMSummarizingCondenserConfig,
     NoOpCondenserConfig,
@@ -144,6 +145,12 @@ class Condenser(ABC):
 
             case LLMAttentionCondenserConfig(llm_config=llm_config):
                 return LLMAttentionCondenser(
+                    llm=LLM(config=llm_config),
+                    **config.model_dump(exclude=['type', 'llm_config']),
+                )
+
+            case LLMAmortizedSummarizationCondenserConfig(llm_config=llm_config):
+                return LLMAmortizedSummarizationCondenser(
                     llm=LLM(config=llm_config),
                     **config.model_dump(exclude=['type', 'llm_config']),
                 )
@@ -312,6 +319,73 @@ class AmortizedForgettingCondenser(RollingCondenser):
         tail = events[-events_from_tail:]
 
         return head + tail
+
+
+class LLMAmortizedSummarizationCondenser(RollingCondenser):
+    """A condenser that maintains a condensed history and forgets old events when it grows too large,
+    keeping a special summarization event after the prefix that summarizes all previous summarizations
+    and newly forgotten events."""
+
+    def __init__(self, llm: LLM, max_size: int = 100, keep_first: int = 0):
+        if keep_first >= max_size // 2:
+            raise ValueError(
+                f'keep_first ({keep_first}) must be less than half of max_size ({max_size})'
+            )
+        if keep_first < 0:
+            raise ValueError(f'keep_first ({keep_first}) cannot be negative')
+        if max_size < 1:
+            raise ValueError(f'max_size ({keep_first}) cannot be non-positive')
+
+        self.max_size = max_size
+        self.keep_first = keep_first
+        self.llm = llm
+        self._previous_summary: str | None = None
+
+        super().__init__()
+
+    def condense(self, events: list[Event]) -> list[Event]:
+        """Apply the amortized forgetting strategy with LLM summarization to the given list of events."""
+        if len(events) <= self.max_size:
+            return events
+
+        target_size = self.max_size // 2
+        head = events[: self.keep_first]
+
+        events_from_tail = target_size - len(head) - 1  # -1 to make room for summary
+        tail = events[-events_from_tail:]
+
+        # Identify events to be forgotten (those not in head or tail)
+        forgotten_events = events[self.keep_first : -events_from_tail]
+
+        # Construct prompt for summarization
+        prompt = "Please provide a concise summary of these events that captures their key information and significance:"
+        
+        if self._previous_summary:
+            prompt += f"\n\nPrevious Summary:\n{self._previous_summary}\n\nNew Events to Summarize:"
+        
+        events_text = '\n'.join(f'{e.timestamp}: {e.message}' for e in forgotten_events)
+        prompt += f"\n{events_text}"
+
+        try:
+            resp = self.llm.completion(
+                messages=[{'content': prompt, 'role': 'user'}]
+            )
+            summary_response = resp.choices[0].message.content
+            self._previous_summary = summary_response
+
+            # Create a new summary event
+            summary_event = AgentCondensationObservation(summary_response)
+
+            # Add metrics to state
+            self.add_metadata('response', resp.model_dump())
+            self.add_metadata('metrics', self.llm.metrics.get())
+            self.add_metadata('forgotten_events_count', len(forgotten_events))
+
+            return head + [summary_event] + tail
+
+        except Exception as e:
+            logger.error(f'Error condensing events: {str(e)}')
+            raise e
 
 
 class ImportantEventSelection(BaseModel):

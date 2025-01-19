@@ -80,6 +80,25 @@ class LLMAttentionCondenserConfig(BaseModel):
     )
 
 
+class LLMAmortizedSummarizationCondenserConfig(BaseModel):
+    """Configuration for LLMAmortizedSummarizationCondenser."""
+
+    type: Literal['llm_amortized_summarization'] = Field('llm_amortized_summarization')
+    llm_config: LLMConfig = Field(
+        ..., description='Configuration for the LLM to use for summarization.'
+    )
+    max_size: int = Field(
+        default=100,
+        description='Maximum size of the condensed history before triggering forgetting.',
+        ge=2,
+    )
+    keep_first: int = Field(
+        default=0,
+        description='Number of initial events to always keep in history.',
+        ge=0,
+    )
+
+
 CondenserConfig = (
     NoOpCondenserConfig
     | ObservationMaskingCondenserConfig
@@ -87,4 +106,5 @@ CondenserConfig = (
     | LLMSummarizingCondenserConfig
     | AmortizedForgettingCondenserConfig
     | LLMAttentionCondenserConfig
+    | LLMAmortizedSummarizationCondenserConfig
 )
