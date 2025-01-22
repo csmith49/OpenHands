@@ -34,6 +34,9 @@ from openhands.core.config import (
     get_llm_config_arg,
     get_parser,
 )
+from openhands.core.config.condenser_config import (
+    LLMAmortizedSummarizationCondenserConfig,
+)
 from openhands.core.logger import openhands_logger as logger
 from openhands.core.main import create_runtime, run_controller
 from openhands.events.action import CmdRunAction, MessageAction
@@ -542,6 +545,9 @@ if __name__ == '__main__':
         args.eval_note,
         args.eval_output_dir,
         details=details,
+        condenser_config=LLMAmortizedSummarizationCondenserConfig(
+            llm_config=llm_config, max_size=20, keep_first=3
+        ),
     )
 
     output_file = os.path.join(metadata.eval_output_dir, 'output.jsonl')

@@ -371,16 +371,22 @@ class LLMAmortizedSummarizationCondenser(RollingCondenser):
         # Construct prompt for summarization
         prompt = 'You are an assistant agent helping to solve a problem. Your job is to summarize what has already happened in the conversation as succinctly as possible; you will be given a summary of what has already happened and a list of events to summarize. Make sure to keep your summary succint: you can ignore details so long as you record _what_ has already happened, _why_ it happened, and the result of those actions.'
 
+        prompt + '\n\n'
+
+        prompt += summary_event.message if summary_event.message else ''
+
+        prompt + '\n\n'
+
+        for message in self.llm.format_messages_for_llm(get_messages(forgotten_events)):
+            prompt += str(message) + '\n\n'
+
         response = self.llm.completion(
             messages=[
                 {
-                    'content': prompt + '\n\n' + summary_event.message
-                    if summary_event.message
-                    else prompt,
+                    'content': prompt,
                     'role': 'user',
                 },
-                *self.llm.format_messages_for_llm(get_messages(forgotten_events)),
-            ]
+            ],
         )
         summary = response.choices[0].message.content
 
