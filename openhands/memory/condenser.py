@@ -369,7 +369,62 @@ class LLMAmortizedSummarizationCondenser(RollingCondenser):
                 forgotten_events.append(event)
 
         # Construct prompt for summarization
-        prompt = 'You are an assistant agent helping to solve a problem. Your job is to summarize what has already happened in the conversation as succinctly as possible; you will be given a summary of what has already happened and a list of events to summarize. Make sure to keep your summary succint: you can ignore details so long as you record _what_ has already happened, _why_ it happened, and the result of those actions.'
+
+        # PROMPT 1
+        # prompt = 'You are an assistant agent helping to solve a problem. Your job is to summarize what has already happened in the conversation as succinctly as possible; you will be given a summary of what has already happened and a list of events to summarize. Make sure to keep your summary succint: you can ignore details so long as you record _what_ has already happened, _why_ it happened, and the result of those actions.'
+
+        # PROMPT 2
+        prompt = "You are an expert software engineer. An AI coding assistant is trying to solve a user's problem but needs your help. The assistant has already done some work, but it has a limited memory and you need to summarize what it has done so far. A good summary is 1) concise, 2) includes all information important to solving the user's problem, and 3) captures _why_ the work was done. The work the assistant has done so far is given below. Please provide a summary that will help the assistant make the best decision moving forward."
+
+        # PROMPT 3
+        prompt = """You are an expert software engineer creating summaries for an AI coding assistant with limited context awareness. Your summaries must:
+
+1. Capture the CURRENT STATE of the solution (what code/components exist)
+2. Track CRITICAL DECISIONS made (architecture choices, rejected approaches)
+3. Highlight BLOCKING ISSUES or requirements not yet met
+4. Include ERROR STATES encountered and their resolutions
+5. Focus on TECHNICAL DETAILS (variable names, function signatures, data structures)
+
+Format summary as:
+STATE: Current implementation state
+DECISIONS: Key technical choices made
+BLOCKERS: Outstanding issues
+ERRORS: Problems encountered/resolved"""
+
+        # PROMPT 4
+        prompt = """You are an expert software engineer responsible for maintaining context during an LLM agent's coding session. Given a sequence of code edits and execution outputs, create a concise technical summary that must include:
+
+1. FILE_STATE (list modified files and their current content status)
+2. TEST_RESULTS (latest execution outputs and outcomes)
+3. CODE_CHANGES (important code modifications and their rationale)
+4. BLOCKING_ISSUES (any errors, failures, or unresolved problems)
+
+Format your summary to emphasize technical details like:
+- Function signatures and variable names
+- File paths
+- Test outputs
+- Error messages and stack traces
+
+Skip routine or administrative actions (e.g. "Assistant started working", "Code executed successfully")."""
+
+        # PROMPT 5
+        prompt = """You are maintaining state history for an LLM-based code agent. Track:
+
+STATE: {File paths, function signatures, data structures}
+TESTS: {Failing cases, error messages, outputs}
+CHANGES: {Code edits, variable updates}
+DEPS: {Dependencies, imports, external calls}
+INTENT: {Why changes were made, acceptance criteria}
+
+SKIP: {Git clones, build logs, file listings}
+MAX_LENGTH: Keep summaries under 500 chars
+
+Example history format:
+STATE: mod_float() in card.py updated
+TESTS: test_format() passed
+CHANGES: str(val) replaces f"{val:.16G}"
+DEPS: None modified
+INTENT: Fix float precision overflow"""
 
         prompt + '\n\n'
 
