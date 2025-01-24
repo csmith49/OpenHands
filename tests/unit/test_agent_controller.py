@@ -458,6 +458,90 @@ async def test_reset_without_pending_action(mock_agent, mock_event_stream):
 
 
 @pytest.mark.asyncio
+async def test_context_window_exceeded_error_handling(mock_agent, mock_event_stream):
+    """Test that context window exceeded errors are handled correctly by truncating history."""
+    # Create a controller with some history
+    controller = AgentController(
+        agent=mock_agent,
+        event_stream=mock_event_stream,
+        max_iterations=10,
+        sid='test',
+        confirmation_mode=False,
+        headless_mode=True,
+    )
+
+    # Add some history events
+    for i in range(10):
+        action = MessageAction(content=f'Message {i}')
+        observation = ErrorObservation(content=f'Error {i}')
+        controller.state.history.extend([action, observation])
+
+    original_history_length = len(controller.state.history)
+
+    # Mock the agent.step() to raise a ContextWindowExceededError
+    from litellm import ContextWindowExceededError
+
+    mock_agent.step.side_effect = ContextWindowExceededError(
+        message='prompt is too long: 233885 tokens > 200000 maximum'
+    )
+
+    # Run a step that should trigger the error
+    await controller._step()
+
+    # Verify that history was truncated to roughly half
+    assert len(controller.state.history) < original_history_length
+    assert len(controller.state.history) >= original_history_length // 2
+
+    # Verify that the agent state wasn't changed to error
+    # (context window errors are handled by truncating history and retrying)
+    assert controller.get_agent_state() != AgentState.ERROR
+
+    await controller.close()
+
+
+@pytest.mark.asyncio
+async def test_context_window_exceeded_error_in_bad_request(
+    mock_agent, mock_event_stream
+):
+    """Test that BadRequestError containing context window error is handled correctly."""
+    controller = AgentController(
+        agent=mock_agent,
+        event_stream=mock_event_stream,
+        max_iterations=10,
+        sid='test',
+        confirmation_mode=False,
+        headless_mode=True,
+    )
+
+    # Add some history events
+    for i in range(10):
+        action = MessageAction(content=f'Message {i}')
+        observation = ErrorObservation(content=f'Error {i}')
+        controller.state.history.extend([action, observation])
+
+    original_history_length = len(controller.state.history)
+
+    # Mock the agent.step() to raise a BadRequestError with context window error message
+    from litellm import BadRequestError
+
+    mock_agent.step.side_effect = BadRequestError(
+        message='litellm.ContextWindowExceededError: litellm.BadRequestError: AnthropicError - prompt is too long'
+    )
+
+    # Run a step that should trigger the error
+    await controller._step()
+
+    # Verify that history was truncated to roughly half
+    assert len(controller.state.history) < original_history_length
+    assert len(controller.state.history) >= original_history_length // 2
+
+    # Verify that the agent state wasn't changed to error
+    assert controller.get_agent_state() != AgentState.ERROR
+
+    await controller.close()
+
+
+@pytest.mark.asyncio
 async def test_reset_with_pending_action_no_metadata(
     mock_agent, mock_event_stream, monkeypatch
 ):
