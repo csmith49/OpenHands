@@ -458,87 +458,105 @@ async def test_reset_without_pending_action(mock_agent, mock_event_stream):
 
 
 @pytest.mark.asyncio
-async def test_context_window_exceeded_error_handling(mock_agent, mock_event_stream):
+async def test_context_window_exceeded_error_handling():
     """Test that context window exceeded errors are handled correctly by truncating history."""
-    # Create a controller with some history
-    controller = AgentController(
-        agent=mock_agent,
-        event_stream=mock_event_stream,
-        max_iterations=10,
-        sid='test',
-        confirmation_mode=False,
-        headless_mode=True,
-    )
+    config = AppConfig()
+    file_store = InMemoryFileStore({})
+    event_stream = EventStream(sid='test', file_store=file_store)
 
-    # Add some history events
-    for i in range(10):
-        action = MessageAction(content=f'Message {i}')
-        observation = ErrorObservation(content=f'Error {i}')
-        controller.state.history.extend([action, observation])
-
-    original_history_length = len(controller.state.history)
+    agent = MagicMock(spec=Agent)
+    agent.llm = MagicMock(spec=LLM)
+    agent.llm.metrics = Metrics()
+    agent.llm.config = config.get_llm_config()
 
     # Mock the agent.step() to raise a ContextWindowExceededError
     from litellm import ContextWindowExceededError
 
-    mock_agent.step.side_effect = ContextWindowExceededError(
-        message='prompt is too long: 233885 tokens > 200000 maximum'
+    def agent_step_fn(state):
+        # Add history events to the state
+        if len(state.history) == 0:
+            for i in range(10):
+                action = MessageAction(content=f'Message {i}')
+                observation = ErrorObservation(content=f'Error {i}')
+                state.history.extend([action, observation])
+            original_history_length = len(state.history)
+            raise ContextWindowExceededError(
+                message='prompt is too long: 233885 tokens > 200000 maximum'
+            )
+        # After history truncation, return a normal action
+        return MessageAction(content='Test message')
+
+    agent.step = agent_step_fn
+    runtime = MagicMock(spec=Runtime)
+    runtime.event_stream = event_stream
+
+    state = await run_controller(
+        config=config,
+        initial_user_action=MessageAction(content='Test message'),
+        runtime=runtime,
+        sid='test',
+        agent=agent,
+        fake_user_response_fn=lambda _: 'repeat',
     )
 
-    # Run a step that should trigger the error
-    await controller._step()
-
     # Verify that history was truncated to roughly half
-    assert len(controller.state.history) < original_history_length
-    assert len(controller.state.history) >= original_history_length // 2
+    assert len(state.history) < 20  # Original history length was 20 (10 pairs)
+    assert len(state.history) >= 10  # Should be at least half
 
     # Verify that the agent state wasn't changed to error
     # (context window errors are handled by truncating history and retrying)
-    assert controller.get_agent_state() != AgentState.ERROR
-
-    await controller.close()
+    assert state.agent_state != AgentState.ERROR
 
 
 @pytest.mark.asyncio
-async def test_context_window_exceeded_error_in_bad_request(
-    mock_agent, mock_event_stream
-):
+async def test_context_window_exceeded_error_in_bad_request():
     """Test that BadRequestError containing context window error is handled correctly."""
-    controller = AgentController(
-        agent=mock_agent,
-        event_stream=mock_event_stream,
-        max_iterations=10,
-        sid='test',
-        confirmation_mode=False,
-        headless_mode=True,
-    )
+    config = AppConfig()
+    file_store = InMemoryFileStore({})
+    event_stream = EventStream(sid='test', file_store=file_store)
 
-    # Add some history events
-    for i in range(10):
-        action = MessageAction(content=f'Message {i}')
-        observation = ErrorObservation(content=f'Error {i}')
-        controller.state.history.extend([action, observation])
-
-    original_history_length = len(controller.state.history)
+    agent = MagicMock(spec=Agent)
+    agent.llm = MagicMock(spec=LLM)
+    agent.llm.metrics = Metrics()
+    agent.llm.config = config.get_llm_config()
 
     # Mock the agent.step() to raise a BadRequestError with context window error message
     from litellm import BadRequestError
 
-    mock_agent.step.side_effect = BadRequestError(
-        message='litellm.ContextWindowExceededError: litellm.BadRequestError: AnthropicError - prompt is too long'
+    def agent_step_fn(state):
+        # Add history events to the state
+        if len(state.history) == 0:
+            for i in range(10):
+                action = MessageAction(content=f'Message {i}')
+                observation = ErrorObservation(content=f'Error {i}')
+                state.history.extend([action, observation])
+            original_history_length = len(state.history)
+            raise BadRequestError(
+                message='litellm.ContextWindowExceededError: litellm.BadRequestError: AnthropicError - prompt is too long'
+            )
+        # After history truncation, return a normal action
+        return MessageAction(content='Test message')
+
+    agent.step = agent_step_fn
+    runtime = MagicMock(spec=Runtime)
+    runtime.event_stream = event_stream
+
+    state = await run_controller(
+        config=config,
+        initial_user_action=MessageAction(content='Test message'),
+        runtime=runtime,
+        sid='test',
+        agent=agent,
+        fake_user_response_fn=lambda _: 'repeat',
     )
 
-    # Run a step that should trigger the error
-    await controller._step()
-
     # Verify that history was truncated to roughly half
-    assert len(controller.state.history) < original_history_length
-    assert len(controller.state.history) >= original_history_length // 2
+    assert len(state.history) < 20  # Original history length was 20 (10 pairs)
+    assert len(state.history) >= 10  # Should be at least half
 
     # Verify that the agent state wasn't changed to error
-    assert controller.get_agent_state() != AgentState.ERROR
-
-    await controller.close()
+    # (context window errors are handled by truncating history and retrying)
+    assert state.agent_state != AgentState.ERROR
 
 
 @pytest.mark.asyncio
