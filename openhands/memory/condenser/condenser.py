@@ -9,6 +9,7 @@ from typing_extensions import override
 from openhands.controller.state.state import State
 from openhands.core.config.condenser_config import CondenserConfig
 from openhands.events.event import Event
+from openhands.memory.condenser.trigger import Trigger, AlwaysTrigger
 
 CONDENSER_METADATA_KEY = 'condenser_meta'
 """Key identifying where metadata is stored in a `State` object's `extra_data` field."""
@@ -45,8 +46,9 @@ class Condenser(ABC):
         events = condenser.condensed_history(state)
     """
 
-    def __init__(self):
+    def __init__(self, trigger: Trigger | None = None):
         self._metadata_batch: dict[str, Any] = {}
+        self._trigger = trigger or AlwaysTrigger()
 
     def add_metadata(self, key: str, value: Any) -> None:
         """Add information to the current metadata batch.
@@ -95,7 +97,10 @@ class Condenser(ABC):
         """
 
     def condensed_history(self, state: State) -> list[Event]:
-        """Condense the state's history."""
+        """Condense the state's history if the trigger condition is met."""
+        if not self._trigger.should_fire(state):
+            return state.history
+            
         with self.metadata_batch(state):
             return self.condense(state.history)
 
@@ -153,18 +158,24 @@ class RollingCondenser(Condenser, ABC):
     will result in second call to `condensed_history` passing `condensation + [event4, event5]` to the `condense` method.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, trigger: Trigger | None = None) -> None:
         self._condensation: list[Event] = []
         self._last_history_length: int = 0
 
-        super().__init__()
+        super().__init__(trigger)
 
     @override
     def condensed_history(self, state: State) -> list[Event]:
-        new_events = state.history[self._last_history_length :]
+        new_events = state.history[self._last_history_length:]
+        current_events = self._condensation + new_events
+
+        if not self._trigger.should_fire(state):
+            self._condensation = current_events
+            self._last_history_length = len(state.history)
+            return current_events
 
         with self.metadata_batch(state):
-            results = self.condense(self._condensation + new_events)
+            results = self.condense(current_events)
 
         self._condensation = results
         self._last_history_length = len(state.history)
